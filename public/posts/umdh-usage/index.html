@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en" dir="auto" data-theme="auto">
+
+<head><script src="/livereload.js?mindelay=10&amp;v=2&amp;port=1313&amp;path=livereload" data-no-instant defer></script><meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<meta name="robots" content="noindex, nofollow">
+<title>UMDH Usage | Kevin Lan</title>
+<meta name="keywords" content="">
+<meta name="description" content="UMDH（User Mode Dump Heap）内存泄露排查笔记
+简介
+UMDH（User Mode Dump Heap） 是 Windows 提供的一个用户态内存分析工具，主要用于：
+
+对比两个时间点的堆快照
+找出哪些调用栈的内存分配在增长
+常用于排查 内存泄露 / 长时间内存增长
+
+UMDH 适合的场景包括：
+
+小块内存（几十字节）持续增长
+普通 dump 中 !heap -stat 无法定位来源
+
+
+基本原理
+UMDH 并不分析单次 dump，而是：
+
+在某一时刻生成 堆快照 A
+程序继续运行
+再生成 堆快照 B
+对比 A 和 B，输出 内存增长的调用栈
+
+因此，UMDH 的关注点是：
+
+分配次数的变化
+同一调用栈的累计增长
+而不是“某一块具体地址的内存”
+
+
+前置条件：开启 UST
+UMDH 要显示分配调用栈，必须开启 UST（User Stack Trace Database）。
+使用 gflags 开启 UST
+
+gflags.exe -i LogisticsPlatformApp.exe &#43;ust
+说明：
+
+-i LogisticsPlatformApp.exe
+针对指定进程名生效
+&#43;ust
+启用用户态堆分配的调用栈记录
+修改的是注册表，需要 重新启动进程
+
+注意事项：">
+<meta name="author" content="">
+<link rel="canonical" href="http://localhost:1313/posts/umdh-usage/">
+<link crossorigin="anonymous" href="/assets/css/stylesheet.343cc480b9ffc8f04ccbe5e968ad674880cab773ec19905e93033065c1e7a804.css" integrity="sha256-NDzEgLn/yPBMy&#43;XpaK1nSIDKt3PsGZBekwMwZcHnqAQ=" rel="preload stylesheet" as="style">
+<link rel="icon" href="http://localhost:1313/favicon.ico">
+<link rel="icon" type="image/png" sizes="16x16" href="http://localhost:1313/favicon-16x16.png">
+<link rel="icon" type="image/png" sizes="32x32" href="http://localhost:1313/favicon-32x32.png">
+<link rel="apple-touch-icon" href="http://localhost:1313/apple-touch-icon.png">
+<link rel="mask-icon" href="http://localhost:1313/safari-pinned-tab.svg">
+<meta name="theme-color" content="#2e2e33">
+<meta name="msapplication-TileColor" content="#2e2e33">
+<link rel="alternate" hreflang="en" href="http://localhost:1313/posts/umdh-usage/">
+<noscript>
+    <style>
+        #theme-toggle,
+        .top-link {
+            display: none;
+        }
+
+    </style>
+    <style>
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --theme: rgb(29, 30, 32);
+                --entry: rgb(46, 46, 51);
+                --primary: rgb(218, 218, 219);
+                --secondary: rgb(155, 156, 157);
+                --tertiary: rgb(65, 66, 68);
+                --content: rgb(196, 196, 197);
+                --code-block-bg: rgb(46, 46, 51);
+                --code-bg: rgb(55, 56, 62);
+                --border: rgb(51, 51, 51);
+                color-scheme: dark;
+            }
+
+            .list {
+                background: var(--theme);
+            }
+
+            .toc {
+                background: var(--entry);
+            }
+        }
+
+        @media (prefers-color-scheme: light) {
+            .list::-webkit-scrollbar-thumb {
+                border-color: var(--code-bg);
+            }
+        }
+
+    </style>
+</noscript>
+<script>
+    if (localStorage.getItem("pref-theme") === "dark") {
+        document.querySelector("html").dataset.theme = 'dark';
+    } else if (localStorage.getItem("pref-theme") === "light") {
+       document.querySelector("html").dataset.theme = 'light';
+    } else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        document.querySelector("html").dataset.theme = 'dark';
+    } else {
+        document.querySelector("html").dataset.theme = 'light';
+    }
+
+</script>
+</head>
+<body id="top">
+    <header class="header">
+    <nav class="nav">
+        <div class="logo">
+            <a href="http://localhost:1313/" accesskey="h" title="Kevin Lan (Alt + H)">Kevin Lan</a>
+            <div class="logo-switches">
+                <button id="theme-toggle" accesskey="t" title="(Alt + T)" aria-label="Toggle theme">
+                    <svg id="moon" xmlns="http://www.w3.org/2000/svg" width="24" height="18" viewBox="0 0 24 24"
+                        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                        stroke-linejoin="round">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                    </svg>
+                    <svg id="sun" xmlns="http://www.w3.org/2000/svg" width="24" height="18" viewBox="0 0 24 24"
+                        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                        stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="5"></circle>
+                        <line x1="12" y1="1" x2="12" y2="3"></line>
+                        <line x1="12" y1="21" x2="12" y2="23"></line>
+                        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                        <line x1="1" y1="12" x2="3" y2="12"></line>
+                        <line x1="21" y1="12" x2="23" y2="12"></line>
+                        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                    </svg>
+                </button>
+            </div>
+        </div>
+        <ul id="menu">
+        </ul>
+    </nav>
+</header>
+<main class="main">
+
+<article class="post-single">
+  <header class="post-header">
+    
+    <h1 class="post-title entry-hint-parent">
+      UMDH Usage
+    </h1>
+    <div class="post-meta"><span title='2025-12-15 15:33:10 +0800 CST'>December 15, 2025</span>
+
+</div>
+  </header> 
+  <div class="post-content"><h1 id="umdhuser-mode-dump-heap内存泄露排查笔记">UMDH（User Mode Dump Heap）内存泄露排查笔记<a hidden class="anchor" aria-hidden="true" href="#umdhuser-mode-dump-heap内存泄露排查笔记">#</a></h1>
+<h2 id="简介">简介<a hidden class="anchor" aria-hidden="true" href="#简介">#</a></h2>
+<p><strong>UMDH（User Mode Dump Heap）</strong> 是 Windows 提供的一个用户态内存分析工具，主要用于：</p>
+<ul>
+<li>对比两个时间点的堆快照</li>
+<li>找出<strong>哪些调用栈的内存分配在增长</strong></li>
+<li>常用于排查 <strong>内存泄露 / 长时间内存增长</strong></li>
+</ul>
+<p>UMDH 适合的场景包括：</p>
+<ul>
+<li>小块内存（几十字节）持续增长</li>
+<li>普通 dump 中 <code>!heap -stat</code> 无法定位来源</li>
+</ul>
+<hr>
+<h2 id="基本原理">基本原理<a hidden class="anchor" aria-hidden="true" href="#基本原理">#</a></h2>
+<p>UMDH 并不分析单次 dump，而是：</p>
+<ol>
+<li>在某一时刻生成 <strong>堆快照 A</strong></li>
+<li>程序继续运行</li>
+<li>再生成 <strong>堆快照 B</strong></li>
+<li>对比 A 和 B，输出 <strong>内存增长的调用栈</strong></li>
+</ol>
+<p>因此，UMDH 的关注点是：</p>
+<ul>
+<li><strong>分配次数的变化</strong></li>
+<li><strong>同一调用栈的累计增长</strong></li>
+<li>而不是“某一块具体地址的内存”</li>
+</ul>
+<hr>
+<h2 id="前置条件开启-ust">前置条件：开启 UST<a hidden class="anchor" aria-hidden="true" href="#前置条件开启-ust">#</a></h2>
+<p>UMDH 要显示分配调用栈，必须开启 <strong>UST（User Stack Trace Database）</strong>。</p>
+<h3 id="使用-gflags-开启-ust">使用 gflags 开启 UST<a hidden class="anchor" aria-hidden="true" href="#使用-gflags-开启-ust">#</a></h3>
+<pre tabindex="0"><code>
+gflags.exe -i LogisticsPlatformApp.exe +ust
+</code></pre><p>说明：</p>
+<ul>
+<li><code>-i LogisticsPlatformApp.exe</code>
+针对指定进程名生效</li>
+<li><code>+ust</code>
+启用用户态堆分配的调用栈记录</li>
+<li>修改的是注册表，需要 <strong>重新启动进程</strong></li>
+</ul>
+<p>注意事项：</p>
+<ul>
+<li>会增加一定内存和性能开销</li>
+<li>只建议在测试 / 调试环境启用</li>
+<li>关闭方式：</li>
+</ul>
+<pre tabindex="0"><code>
+gflags.exe -i LogisticsPlatformApp.exe -ust
+</code></pre><hr>
+<h2 id="umdh-的基本用法">UMDH 的基本用法<a hidden class="anchor" aria-hidden="true" href="#umdh-的基本用法">#</a></h2>
+<h3 id="1-获取进程-pid">1. 获取进程 PID<a hidden class="anchor" aria-hidden="true" href="#1-获取进程-pid">#</a></h3>
+<p>可以通过：</p>
+<ul>
+<li>任务管理器</li>
+<li><code>tasklist</code></li>
+<li>Process Explorer</li>
+</ul>
+<hr>
+<h3 id="2-生成第一次堆快照">2. 生成第一次堆快照<a hidden class="anchor" aria-hidden="true" href="#2-生成第一次堆快照">#</a></h3>
+<p>示例：</p>
+<pre tabindex="0"><code>
+umdh -p:12345 -f:snap1.txt
+</code></pre><hr>
+<h3 id="3-生成第二次堆快照">3. 生成第二次堆快照<a hidden class="anchor" aria-hidden="true" href="#3-生成第二次堆快照">#</a></h3>
+<p>在程序运行一段时间后：</p>
+<pre tabindex="0"><code>
+umdh -p:12345 -f:snap2.txt
+</code></pre><hr>
+<h3 id="4-对比两个快照">4. 对比两个快照<a hidden class="anchor" aria-hidden="true" href="#4-对比两个快照">#</a></h3>
+<pre tabindex="0"><code>
+umdh snap1.txt snap2.txt &gt; diff.txt
+</code></pre><p><code>diff.txt</code> 即为分析结果。</p>
+<hr>
+<h2 id="umdh-输出内容说明">UMDH 输出内容说明<a hidden class="anchor" aria-hidden="true" href="#umdh-输出内容说明">#</a></h2>
+<p>UMDH diff 中常见的条目格式如下：</p>
+<pre tabindex="0"><code>
++   3c270 ( 3d624 -  13b4)   10f6 allocs BackTrace4BD0
++    10a1 (  10f6 -    55)   BackTrace4BD0 allocations
+</code></pre><p>字段含义：</p>
+<ul>
+<li><code>+ 3c270</code>
+净增长内存（十六进制，单位字节）</li>
+<li><code>(3d624 - 13b4)</code>
+后一次快照 - 前一次快照</li>
+<li><code>10f6 allocs</code>
+分配次数</li>
+<li><code>10a1</code>
+分配次数减去释放次数</li>
+<li><code>BackTrace4BD0</code>
+调用栈 ID</li>
+</ul>
+<p>一般关注点：</p>
+<ul>
+<li><strong>allocs 是否持续增加</strong></li>
+<li><strong>allocations（净增长）是否为正数</strong></li>
+<li>同一 <code>BackTraceXXX</code> 是否反复出现</li>
+</ul>
+<hr>
+<h2 id="关于分配大小的理解">关于分配大小的理解<a hidden class="anchor" aria-hidden="true" href="#关于分配大小的理解">#</a></h2>
+<p>UMDH 中看到的大小通常是：</p>
+<ul>
+<li><strong>请求大小（requested size）</strong></li>
+<li>不包含堆管理开销</li>
+</ul>
+<p>例如：</p>
+<pre tabindex="0"><code>
+34 bytes + 2C at 1524B8BBCD0 by BackTrace4BD0
+</code></pre><p>含义：</p>
+<ul>
+<li>请求了 <code>0x34</code>（52）字节</li>
+<li>堆管理额外开销 <code>0x2C</code>（44）字节</li>
+<li>实际堆占用约 96 字节</li>
+<li>分配来源为 <code>BackTrace4BD0</code></li>
+</ul>
+<p>在 LFH 下，常见现象是：</p>
+<ul>
+<li>请求大小：<code>0x34</code></li>
+<li>堆统计中看到：<code>0x40</code>（64 字节 bucket）</li>
+</ul>
+<p>这是正常的对齐行为。</p>
+<hr>
+<h2 id="符号pdb说明">符号（PDB）说明<a hidden class="anchor" aria-hidden="true" href="#符号pdb说明">#</a></h2>
+<ul>
+<li><strong>UMDH 本身不强制依赖 PDB</strong></li>
+<li>没有 PDB 也可以看到模块名和函数名（系统模块）</li>
+<li>有 PDB 可以：
+<ul>
+<li>显示更完整的函数名</li>
+<li>定位到自定义模块中的具体函数</li>
+</ul>
+</li>
+</ul>
+<p>建议：</p>
+<ul>
+<li>系统模块：使用微软符号服务器即可</li>
+<li>自己的程序：尽量保留 PDB</li>
+</ul>
+<hr>
+<h2 id="常见注意事项">常见注意事项<a hidden class="anchor" aria-hidden="true" href="#常见注意事项">#</a></h2>
+<ul>
+<li>UMDH 适合 <strong>趋势分析</strong>，不适合看“单个对象”</li>
+<li>LFH (Low Fragmentation Heap) 场景下，<code>!heap -flt</code> 往往不可用</li>
+<li>十六进制数值需要注意换算</li>
+<li>关注 <strong>分配次数</strong>，而不只是总字节数</li>
+</ul>
+
+
+  </div>
+
+  <footer class="post-footer">
+    <ul class="post-tags">
+    </ul>
+  </footer>
+</article>
+    </main>
+    
+<footer class="footer">
+        <span>&copy; 2025 <a href="http://localhost:1313/">Kevin Lan</a></span> · 
+
+    <span>
+        Powered by
+        <a href="https://gohugo.io/" rel="noopener noreferrer" target="_blank">Hugo</a> &
+        <a href="https://github.com/adityatelange/hugo-PaperMod/" rel="noopener" target="_blank">PaperMod</a>
+    </span>
+</footer>
+<a href="#top" aria-label="go to top" title="Go to Top (Alt + G)" class="top-link" id="top-link" accesskey="g">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 6" fill="currentColor">
+        <path d="M12 6H0l6-6z" />
+    </svg>
+</a>
+
+<script>
+    let menu = document.getElementById('menu');
+    if (menu) {
+        
+        const scrollPosition = localStorage.getItem("menu-scroll-position");
+        if (scrollPosition) {
+            menu.scrollLeft = parseInt(scrollPosition, 10);
+        }
+        
+        menu.onscroll = function () {
+            localStorage.setItem("menu-scroll-position", menu.scrollLeft);
+        }
+    }
+
+    document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+        anchor.addEventListener("click", function (e) {
+            e.preventDefault();
+            var id = this.getAttribute("href").substr(1);
+            if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+                document.querySelector(`[id='${decodeURIComponent(id)}']`).scrollIntoView({
+                    behavior: "smooth"
+                });
+            } else {
+                document.querySelector(`[id='${decodeURIComponent(id)}']`).scrollIntoView();
+            }
+            if (id === "top") {
+                history.replaceState(null, null, " ");
+            } else {
+                history.pushState(null, null, `#${id}`);
+            }
+        });
+    });
+
+</script>
+<script>
+    var mybutton = document.getElementById("top-link");
+    window.onscroll = function () {
+        if (document.body.scrollTop > 800 || document.documentElement.scrollTop > 800) {
+            mybutton.style.visibility = "visible";
+            mybutton.style.opacity = "1";
+        } else {
+            mybutton.style.visibility = "hidden";
+            mybutton.style.opacity = "0";
+        }
+    };
+
+</script>
+<script>
+    document.getElementById("theme-toggle").addEventListener("click", () => {
+        const html = document.querySelector("html");
+        if (html.dataset.theme === "dark") {
+            html.dataset.theme = 'light';
+            localStorage.setItem("pref-theme", 'light');
+        } else {
+            html.dataset.theme = 'dark';
+            localStorage.setItem("pref-theme", 'dark');
+        }
+    })
+
+</script>
+</body>
+
+</html>
