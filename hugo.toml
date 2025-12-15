@@ -2,7 +2,17 @@ baseURL = 'https://example.org/'
 languageCode = 'en-us'
 title = 'Kevin Lan'
 theme = 'hugo-PaperMod'
+enableEmoji = true
 [caches]
   [caches.images]
     dir = ':cacheDir/images'
 
+[[languages.en.menu.main]]
+name = "Archives"
+url = "archives"
+weight = 5
+
+[[languages.en.menu.main]]
+name = "Tags"
+url = "tags/"
+weight = 10
