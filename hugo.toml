@@ -2,4 +2,7 @@ baseURL = 'https://example.org/'
 languageCode = 'en-us'
 title = 'Kevin Lan'
 theme = 'hugo-PaperMod'
+[caches]
+  [caches.images]
+    dir = ':cacheDir/images'
 
