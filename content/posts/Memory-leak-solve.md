@@ -1,7 +1,8 @@
 +++
 date = '2025-12-16T14:45:35+08:00'
-draft = true
+draft = false
 title = '一次 WinDbg + P/Invoke 内存暴涨问题的排查'
+tags = ['Debug']
 +++
 ## 背景
 
