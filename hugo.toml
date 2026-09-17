@@ -16,3 +16,9 @@ weight = 5
 name = "Tags"
 url = "tags/"
 weight = 10
+
+[markup.goldmark.extensions.passthrough]
+enable = true
+[markup.goldmark.extensions.passthrough.delimiters]
+block = [['$$', '$$']]
+inline = [['$', '$']]

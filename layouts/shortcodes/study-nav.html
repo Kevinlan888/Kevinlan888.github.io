@@ -1,0 +1,18 @@
+{{- $pages := sort (where .Site.RegularPages "Params.studyseries" .Page.Params.studyseries) "Params.studyorder" -}}
+<nav aria-label="高数基础复习笔记系列导航">
+  <hr>
+  <p>最后更新：<time datetime="{{ .Page.Lastmod.Format "2006-01-02" }}">{{ .Page.Lastmod.Format "2006-01-02" }}</time> · 持续更新</p>
+  {{- range $i, $page := $pages -}}
+    {{- if eq $page.RelPermalink $.Page.RelPermalink -}}
+      {{- if gt $i 0 }}
+  <p>上一篇：<a href="{{ (index $pages (sub $i 1)).RelPermalink }}">{{ (index $pages (sub $i 1)).Title }}</a></p>
+      {{- end -}}
+      {{- if lt $i (sub (len $pages) 1) }}
+  <p>下一篇：<a href="{{ (index $pages (add $i 1)).RelPermalink }}">{{ (index $pages (add $i 1)).Title }}</a></p>
+      {{- end -}}
+    {{- end -}}
+  {{- end }}
+  {{- if ne .Page.Params.studyorder 0 }}
+  <p><a href="{{ (.Site.GetPage "/posts/calculus-basics").RelPermalink }}">返回总目录与公式速查</a></p>
+  {{- end }}
+</nav>

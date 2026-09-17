@@ -1,0 +1,8 @@
+/* Keep long equations scrollable on narrow screens. */
+.post-content math[display="block"] {
+  display: block;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.75rem 0;
+  max-width: 100%;
+}
